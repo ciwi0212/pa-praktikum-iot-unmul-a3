@@ -1,25 +1,3 @@
-// ============================================================
-//  GREENHOUSE CONTROLLER - FINAL v3
-//
-//  ROOT CAUSE FIX:
-//  Antares menyimpan data permanen. Saat ESP32 restart,
-//  retrieveLastData() membaca perintah "MANUAL" dari sesi lama
-//  → lastModeCmd = "" → "MANUAL" != "" → langsung eksekusi MANUAL
-//
-//  FIX v3:
-//  1. lastModeCmd diinisialisasi "OTOMATIS" (bukan "")
-//     → data lama dari Antares tidak dianggap perintah baru
-//  2. Flag isFirstRetrieve: skip eksekusi retrieve pertama
-//     → sistem stabil dulu sebelum menerima perintah Antares
-//  3. publishStatusKeAntares() TIDAK ada di loop sensor
-//  4. Guard adaPerubahan ketat (hanya true jika nilai berubah)
-//
-//  Arsitektur 3 Device:
-//  - greenhouse_cmd    : ESP32 BACA saja  → input dari dashboard
-//  - greenhouse_sensor : ESP32 TULIS saja → data sensor
-//  - greenhouse_status : ESP32 TULIS saja → feedback status aktuator
-// ============================================================
-
 #include <AntaresESPMQTT.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -28,9 +6,6 @@
 #include <ESP32Servo.h>
 #include <UniversalTelegramBot.h>
 
-// ============================================================
-//  KONFIGURASI
-// ============================================================
 #define SSID      "Tenda_CE6988"
 #define PASSWORD  "1234567890"
 
@@ -45,24 +20,19 @@ const String anggota[] = {
 
 #define ACCESSKEY     "2ca8a31719edcb10:a1dcb43162553ca5"
 #define projectName   "Docs"
-#define deviceCommand "greenhouse_cmd"     // BACA SAJA  - input dari dashboard
-#define deviceSensor  "greenhouse_sensor"  // TULIS SAJA - data sensor
-#define deviceStatus  "greenhouse_status"  // TULIS SAJA - feedback status aktuator
+#define deviceCommand "greenhouse_cmd"    
+#define deviceSensor  "greenhouse_sensor"  
+#define deviceStatus  "greenhouse_status"  
 
-// ============================================================
-//  INTERVAL (ms)
-// ============================================================
+
 #define INTERVAL_MQTT      5000
 #define INTERVAL_TELEGRAM  3000
 #define INTERVAL_SENSOR    10000
 
-// Delay sebelum retrieve pertama setelah boot (30 detik)
-// Memberi waktu sistem stabil & menghindari baca data lama Antares
+
 #define DELAY_FIRST_RETRIEVE 30000
 
-// ============================================================
-//  PIN
-// ============================================================
+
 #define PIN_LED      2
 #define PIN_RELAY    15
 #define PIN_SERVO    23
@@ -70,31 +40,22 @@ const String anggota[] = {
 #define I2C_SDA      21
 #define I2C_SCL      22
 
-// ============================================================
-//  OBJEK
-// ============================================================
 AntaresESPMQTT antares(ACCESSKEY);
 WiFiClientSecure clientTelegram;
 UniversalTelegramBot bot(BOT_TOKEN, clientTelegram);
 BH1750 lightMeter;
 Servo myservo;
 
-// ============================================================
-//  STATE GLOBAL
-// ============================================================
 bool servoManual   = false;
 bool pompaOtomatis = false;
 bool ledOtomatis   = false;
-bool modeOtomatis  = true;   // Default: OTOMATIS
+bool modeOtomatis  = true;   
 
-// FIX v3: Cache diinisialisasi sesuai state default
-// Sehingga data lama dari Antares tidak dianggap perintah baru
-String lastModeCmd  = "OTOMATIS"; // ← bukan "" lagi
+String lastModeCmd  = "OTOMATIS"; 
 String lastPompaCmd = "OFF";
 String lastLedCmd   = "OFF";
 String lastServoCmd = "TUTUP";
 
-// FIX v3: Flag untuk skip eksekusi retrieve pertama setelah boot
 bool isFirstRetrieve = true;
 
 int kelembapanSekarang = 0;
@@ -105,18 +66,11 @@ unsigned long lastMQTT     = 0;
 unsigned long lastTelegram = 0;
 unsigned long lastSensor   = 0;
 
-// ============================================================
-//  FORWARD DECLARATIONS
-// ============================================================
 void updateLogikaOtomatis();
 void gerakServoPelan(int targetPos);
 void publishSensorKeAntares();
 void publishStatusKeAntares();
 
-// ============================================================
-//  PUBLISH SENSOR → deviceSensor
-//  Dipanggil: tiap INTERVAL_SENSOR di loop()
-// ============================================================
 void publishSensorKeAntares() {
   String statusTanaman = (kelembapanSekarang < 50) ? "Bahaya" : "Aman";
 
@@ -129,11 +83,6 @@ void publishSensorKeAntares() {
   antares.publish(projectName, deviceSensor);
 }
 
-// ============================================================
-//  PUBLISH STATUS AKTUATOR → deviceStatus
-//  Dipanggil: HANYA saat ada perubahan state nyata
-//  TIDAK pernah publish ke deviceCommand
-// ============================================================
 void publishStatusKeAntares() {
   String statusAtap = (myservo.read() > 45) ? "BUKA" : "TUTUP";
 
@@ -146,13 +95,8 @@ void publishStatusKeAntares() {
   antares.publish(projectName, deviceStatus);
 }
 
-// ============================================================
-//  ANTARES MQTT CALLBACK
-// ============================================================
 void callback(char* topic, byte* payload, unsigned int length) {
 
-  // FIX v3: Skip eksekusi retrieve pertama
-  // Data yang dibaca = data lama dari sesi sebelumnya, bukan perintah baru
   if (isFirstRetrieve) {
     Serial.println("[CALLBACK] Skip retrieve pertama (data lama Antares).");
     isFirstRetrieve = false;
@@ -191,11 +135,9 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   bool adaPerubahan = false;
 
-  // ---- MODE ----
   if (data.containsKey("mode")) {
     String mode = data["mode"].as<String>();
 
-    // Guard ketat: hanya proses jika nilai benar-benar berbeda
     if (mode != lastModeCmd) {
       lastModeCmd  = mode;
       adaPerubahan = true;
@@ -213,7 +155,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     }
   }
 
-  // ---- Kontrol aktuator (hanya saat MANUAL) ----
   if (!modeOtomatis) {
 
     if (data.containsKey("led")) {
@@ -261,9 +202,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-// ============================================================
-//  CEK APAKAH USER TERDAFTAR
-// ============================================================
 bool isAllowed(String id) {
   for (int i = 0; i < 3; i++) {
     if (id == anggota[i]) return true;
@@ -271,9 +209,6 @@ bool isAllowed(String id) {
   return false;
 }
 
-// ============================================================
-//  PESAN STATUS UNTUK TELEGRAM
-// ============================================================
 String getStatusMessage() {
   String statusPompa = digitalRead(PIN_RELAY) ? "ON ✅"   : "OFF ❌";
   String statusLED   = digitalRead(PIN_LED)   ? "ON 💡"   : "OFF 🌑";
@@ -293,9 +228,6 @@ String getStatusMessage() {
   return msg;
 }
 
-// ============================================================
-//  HANDLER TELEGRAM
-// ============================================================
 void handleTelegram() {
   yield();
   int n = bot.getUpdates(bot.last_message_received + 1);
@@ -388,9 +320,6 @@ void handleTelegram() {
   }
 }
 
-// ============================================================
-//  GERAK SERVO PELAN
-// ============================================================
 void gerakServoPelan(int targetPos) {
   int posisiSekarang = myservo.read();
   if (posisiSekarang < targetPos) {
@@ -400,9 +329,6 @@ void gerakServoPelan(int targetPos) {
   }
 }
 
-// ============================================================
-//  LOGIKA OTOMATIS
-// ============================================================
 void updateLogikaOtomatis() {
   if      (kelembapanSekarang < 50) pompaOtomatis = true;
   else if (kelembapanSekarang > 80) pompaOtomatis = false;
@@ -421,9 +347,6 @@ void updateLogikaOtomatis() {
   }
 }
 
-// ============================================================
-//  SETUP
-// ============================================================
 void setup() {
   Serial.begin(115200);
 
@@ -450,11 +373,8 @@ void setup() {
   antares.setMqttServer();
   antares.setCallback(callback);
 
-  // Set lastMQTT agar retrieve pertama terjadi setelah DELAY_FIRST_RETRIEVE
-  // Ini mencegah baca data lama Antares terlalu cepat saat boot
   lastMQTT = millis() - INTERVAL_MQTT + DELAY_FIRST_RETRIEVE;
 
-  // Publish status awal OTOMATIS ke deviceStatus
   publishStatusKeAntares();
 
   bot.sendMessage(CHAT_ID,
@@ -462,9 +382,6 @@ void setup() {
   Serial.println("Setup selesai. Mode default: OTOMATIS");
 }
 
-// ============================================================
-//  LOOP
-// ============================================================
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi putus, reconnect...");
@@ -475,19 +392,16 @@ void loop() {
 
   antares.checkMqttConnection();
 
-  // Retrieve command dari Antares
   if (millis() - lastMQTT > INTERVAL_MQTT) {
     antares.retrieveLastData(projectName, deviceCommand);
     lastMQTT = millis();
   }
 
-  // Cek pesan Telegram
   if (millis() - lastTelegram > INTERVAL_TELEGRAM) {
     handleTelegram();
     lastTelegram = millis();
   }
 
-  // Baca sensor & publish ke deviceSensor saja
   if (millis() - lastSensor > INTERVAL_SENSOR) {
     soilRaw = analogRead(PIN_MOISTURE);
     kelembapanSekarang = constrain(map(soilRaw, 3700, 1500, 0, 100), 0, 100);
@@ -498,7 +412,6 @@ void loop() {
 
     updateLogikaOtomatis();
     publishSensorKeAntares();
-    // publishStatusKeAntares() TIDAK dipanggil di sini
 
     lastSensor = millis();
   }
